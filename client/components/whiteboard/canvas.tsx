@@ -1,6 +1,6 @@
 "use client";
 
-import { Stage, Layer, Line, Rect } from "react-konva";
+import { Stage, Layer, Line, Rect, Circle } from "react-konva";
 import { useDraw } from "@/hooks/use-draw";
 import { useEffect, useState } from "react";
 
@@ -57,6 +57,20 @@ export function WhiteboardCanvas() {
                                     height={layer.height}
                                     stroke={layer.stroke}
                                     strokeWidth={layer.strokeWidth}
+                                />
+                            );
+                        }
+                        if (layer.type === "circle") {
+                            return (
+                                <Circle
+                                    key={layer.id}
+                                    x={layer.x}
+                                    y={layer.y}
+                                    // Konva circles use radius, but we stored width (diameter)
+                                    radius={layer.width ? layer.width / 2 : 0}
+                                    stroke={layer.stroke}
+                                    strokeWidth={layer.strokeWidth}
+                                    fill={layer.fill}
                                 />
                             );
                         }
