@@ -28,6 +28,7 @@ interface CanvasState {
     redo: () => void
     canUndo: boolean
     canRedo: boolean
+    clearCanvas: () => void
 }
 
 export const useCanvasStore = create<CanvasState>((set, get) => ({
@@ -55,6 +56,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     historyStep: 0,
     canUndo: false,
     canRedo: false,
+    clearCanvas: () => set({ layers: [], history: [[]], historyStep: 0 }),
 
     saveHistory: () => {
         const { layers, history, historyStep } = get();

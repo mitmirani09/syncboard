@@ -54,6 +54,11 @@ io.on("connection", (socket) => {
         socket.to(data.roomId).emit("draw_end", data);
     });
 
+    // 5. Clear Board
+    socket.on("clear_board", (roomId) => {
+        socket.to(roomId).emit("clear_board");
+    });
+
     socket.on("disconnect", () => {
         console.log("User disconnected:", socket.id);
     });

@@ -6,8 +6,10 @@ import { useSocket } from "@/hooks/use-socket";
 
 export const useDraw = () => {
     const [isDrawing, setIsDrawing] = useState(false);
+    const [typingPosition, setTypingPosition] = useState<{ x: number; y: number } | null>(null);
     const socket = useSocket();
     const roomId = "demo-room";
+    const { clearCanvas } = useCanvasStore();
 
     const {
         tool,
@@ -19,16 +21,13 @@ export const useDraw = () => {
         saveHistory
     } = useCanvasStore();
 
-    // 1. NEW: LOAD DATA FROM MONGODB ON MOUNT
+    // 1. LOAD DATA FROM DB
     useEffect(() => {
         async function fetchDrawings() {
             try {
                 const res = await fetch(`http://localhost:3001/api/drawings/${roomId}`);
                 const data = await res.json();
-                // If we found drawings in the DB, load them into the store
-                if (data && data.length > 0) {
-                    setLayers(data);
-                }
+                if (data && data.length > 0) setLayers(data);
             } catch (error) {
                 console.error("Failed to fetch drawings:", error);
             }
@@ -36,10 +35,9 @@ export const useDraw = () => {
         fetchDrawings();
     }, [roomId, setLayers]);
 
-    // 2. LISTEN FOR SOCKET EVENTS (Collaborators)
+    // 2. SOCKET LISTENERS
     useEffect(() => {
         if (!socket) return;
-
         socket.emit("join_room", roomId);
 
         socket.on("draw_start", (data: any) => {
@@ -51,7 +49,8 @@ export const useDraw = () => {
                 fill: data.fill,
                 stroke: data.stroke,
                 strokeWidth: data.strokeWidth,
-                points: data.type === "pencil" ? [data.x, data.y] : [],
+                // FIX: Allow points for both pencil AND eraser
+                points: (data.type === "pencil" || data.type === "eraser") ? [data.x, data.y] : [],
                 width: 0,
                 height: 0,
             };
@@ -63,7 +62,8 @@ export const useDraw = () => {
                 return prev.map((layer) => {
                     if (layer.id !== data.layerId) return layer;
 
-                    if (layer.type === "pencil") {
+                    // FIX: Update points for both pencil AND eraser
+                    if (layer.type === "pencil" || layer.type === "eraser") {
                         return { ...layer, points: [...layer.points!, data.x, data.y] };
                     } else if (layer.type === "rectangle") {
                         return { ...layer, width: data.w, height: data.h };
@@ -75,16 +75,34 @@ export const useDraw = () => {
             });
         });
 
+        socket.on("clear_board", () => clearCanvas());
+
         return () => {
             socket.off("draw_start");
             socket.off("draw_move");
+            socket.off("clear_board");
         };
-    }, [socket, setLayers]);
+    }, [socket, setLayers, clearCanvas]);
 
+    const handleClear = async () => {
+        if (!confirm("Are you sure you want to clear the board?")) return;
+        clearCanvas();
+        if (socket) socket.emit("clear_board", roomId);
+        await fetch(`http://localhost:3001/api/drawings/${roomId}`, { method: "DELETE" });
+    };
 
     // 3. MOUSE HANDLERS
     const handleMouseDown = (e: any) => {
+        console.log("🖱️ Mouse Down! Current Tool:", tool);
         if (tool === "select" || tool === "hand") return;
+
+        if (tool === "text") {
+            e.evt.preventDefault();
+            const stage = e.target.getStage();
+            const pos = stage.getRelativePointerPosition();
+            setTypingPosition({ x: pos.x, y: pos.y });
+            return; // Stop here, don't create a "drawing" layer yet
+        }
 
         setIsDrawing(true);
         const pos = e.target.getStage().getPointerPosition();
@@ -96,9 +114,10 @@ export const useDraw = () => {
             x: pos.x,
             y: pos.y,
             fill: fillColor,
-            stroke: strokeColor,
-            strokeWidth: strokeWidth,
-            points: tool === "pencil" ? [pos.x, pos.y] : [],
+            stroke: tool === "eraser" ? "#000000" : strokeColor,
+            strokeWidth: tool === "eraser" ? 15 : strokeWidth,
+            // FIX: Initialize points for eraser too!
+            points: (tool === "pencil" || tool === "eraser") ? [pos.x, pos.y] : [],
             width: 0,
             height: 0,
         };
@@ -113,10 +132,66 @@ export const useDraw = () => {
                 x: pos.x,
                 y: pos.y,
                 fill: fillColor,
-                stroke: strokeColor,
-                strokeWidth: strokeWidth
+                stroke: tool === "eraser" ? "#000000" : strokeColor,
+                strokeWidth: tool === "eraser" ? 15 : strokeWidth,
             });
         }
+    };
+
+    // NEW: Function to save the text when user hits Enter
+    const handleAddText = (text: string) => {
+        if (!typingPosition) return;
+
+        const newId = uuidv4();
+        const newLayer: Layer = {
+            id: newId,
+            type: "text",
+            x: typingPosition.x,
+            y: typingPosition.y,
+            text: text, // Save the text
+            fill: strokeColor, // Use current color for text
+            stroke: strokeColor,
+            strokeWidth: 1,
+            width: text.length * 10, // Rough estimate
+            height: 20,
+        };
+
+        // Save Local
+        setLayers([...layers, newLayer]);
+        saveHistory();
+
+        // Broadcast Socket
+        if (socket) {
+            socket.emit("draw_start", {
+                roomId,
+                layerId: newId,
+                type: "text",
+                x: typingPosition.x,
+                y: typingPosition.y,
+                text: text,
+                fill: strokeColor
+            });
+        }
+
+        // Save DB (Optional: Reuse the fetch logic from handleMouseUp or make a helper)
+        // For now, let's just use the same pattern:
+        fetch("http://localhost:3001/api/drawings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                roomId,
+                layerId: newId,
+                type: "text",
+                x: typingPosition.x,
+                y: typingPosition.y,
+                text: text,
+                fill: strokeColor,
+                stroke: strokeColor,
+                strokeWidth: 1
+            }),
+        });
+
+        setTypingPosition(null); // Hide input
     };
 
     const handleMouseMove = (e: any) => {
@@ -130,7 +205,8 @@ export const useDraw = () => {
             const lastLayer = { ...prevLayers[prevLayers.length - 1] };
             currentLayerId = lastLayer.id;
 
-            if (lastLayer.type === "pencil") {
+            // FIX: Update points for eraser too!
+            if (lastLayer.type === "pencil" || lastLayer.type === "eraser") {
                 lastLayer.points = lastLayer.points!.concat([point.x, point.y]);
             }
             else if (lastLayer.type === "rectangle") {
@@ -148,18 +224,14 @@ export const useDraw = () => {
         });
 
         if (socket && currentLayerId) {
-            // Use the *last* known layer from the state to get Start X/Y
-            // Note: In a production app, we would use a Ref for startPos to be safer,
-            // but this works for now because layers is fresh in this render.
             const lastLayer = layers[layers.length - 1];
-
-            // Safety check to prevent crashing if layer isn't ready
             if (!lastLayer) return;
 
             const startX = lastLayer.x;
             const startY = lastLayer.y;
 
-            if (tool === "pencil") {
+            // FIX: Emit move events for eraser too!
+            if (tool === "pencil" || tool === "eraser") {
                 socket.emit("draw_move", {
                     roomId,
                     layerId: currentLayerId,
@@ -179,11 +251,7 @@ export const useDraw = () => {
                 const dx = point.x - startX;
                 const dy = point.y - startY;
                 const radius = Math.sqrt(dx * dx + dy * dy);
-                socket.emit("draw_move", {
-                    roomId,
-                    layerId: currentLayerId,
-                    r: radius,
-                });
+                socket.emit("draw_move", { roomId, layerId: currentLayerId, r: radius });
             }
         }
     };
@@ -193,10 +261,7 @@ export const useDraw = () => {
             setIsDrawing(false);
             saveHistory();
 
-            // NEW: SAVE TO DATABASE
-            // Get the layer we just finished drawing
             const lastLayer = layers[layers.length - 1];
-
             if (lastLayer) {
                 try {
                     await fetch("http://localhost:3001/api/drawings", {
@@ -216,11 +281,7 @@ export const useDraw = () => {
                             strokeWidth: lastLayer.strokeWidth,
                         }),
                     });
-
-                    // Cleanup socket event
-                    if (socket) {
-                        socket.emit("draw_end", { roomId });
-                    }
+                    if (socket) socket.emit("draw_end", { roomId });
                 } catch (error) {
                     console.error("Failed to save drawing:", error);
                 }
@@ -233,5 +294,9 @@ export const useDraw = () => {
         handleMouseDown,
         handleMouseMove,
         handleMouseUp,
+        handleClear,
+        typingPosition,
+        setTypingPosition,
+        handleAddText
     };
 };

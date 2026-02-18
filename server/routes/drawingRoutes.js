@@ -23,4 +23,14 @@ router.post("/", async (req, res) => {
     }
 });
 
+// DELETE: Clear all drawings in a room
+router.delete("/:roomId", async (req, res) => {
+    try {
+        await Drawing.deleteMany({ roomId: req.params.roomId });
+        res.status(200).json({ message: "Board cleared" });
+    } catch (err) {
+        res.status(500).json(err);
+    }
+});
+
 module.exports = router;

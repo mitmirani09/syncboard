@@ -1,5 +1,5 @@
 "use client"
-
+import { useSocket } from "@/hooks/use-socket"; // Import socket hook
 import { useCanvasStore } from "@/store/canvas-store" // Import store
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
@@ -25,6 +25,7 @@ const COLORS = [
 
 export function PropertiesPanel() {
     const {
+        clearCanvas,
         strokeColor,
         setStrokeColor,
         strokeWidth,
@@ -33,7 +34,20 @@ export function PropertiesPanel() {
         redo,    // We will add these to store next
         canUndo, // We will add these to store next
         canRedo  // We will add these to store next
-    } = useCanvasStore()
+    } = useCanvasStore();
+
+    const socket = useSocket();
+    const roomId = "demo-room";
+
+    const handleClearBoard = async () => {
+        if (!confirm("Clear entire board?")) return;
+
+        clearCanvas(); // UI Clear
+        if (socket) socket.emit("clear_board", roomId); // Notify others
+
+        // DB Clear
+        await fetch(`http://localhost:3001/api/drawings/${roomId}`, { method: "DELETE" });
+    };
 
     return (
         <div className="fixed left-4 top-1/2 -translate-y-1/2 flex flex-col gap-6 rounded-xl border bg-card p-4 shadow-xl w-64">
@@ -104,7 +118,12 @@ export function PropertiesPanel() {
                     >
                         <Redo2 className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10 hover:text-destructive ml-auto">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleClearBoard} // <--- Attach here
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive ml-auto"
+                    >
                         <Trash2 className="h-4 w-4" />
                     </Button>
                 </div>
