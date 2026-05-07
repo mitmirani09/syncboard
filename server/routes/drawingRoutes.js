@@ -23,6 +23,19 @@ router.post("/", async (req, res) => {
     }
 });
 
+// PUT: Update a specific layer's position (Drag & Drop)
+router.put("/:roomId/:layerId", async (req, res) => {
+    try {
+        await Drawing.findOneAndUpdate(
+            { roomId: req.params.roomId, layerId: req.params.layerId },
+            { $set: { x: req.body.x, y: req.body.y } }
+        );
+        res.status(200).json({ message: "Position updated" });
+    } catch (err) {
+        res.status(500).json(err);
+    }
+});
+
 // DELETE: Clear all drawings in a room
 router.delete("/:roomId", async (req, res) => {
     try {

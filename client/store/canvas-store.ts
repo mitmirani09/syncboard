@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { Layer } from "@/types"; // Make sure you have this type defined
 
-export type Tool = 'select' | 'hand' | 'pencil' | 'rectangle' | 'circle' | 'text' | 'eraser'
+export type Tool = 'select' | 'hand' | 'pencil' | 'rectangle' | 'circle' | 'text' | 'eraser' | 'line' | 'select'
 
 interface CanvasState {
     // Tools & Properties

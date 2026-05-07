@@ -7,6 +7,8 @@ import { useSocket } from "@/hooks/use-socket";
 export const useDraw = () => {
     const [isDrawing, setIsDrawing] = useState(false);
     const [typingPosition, setTypingPosition] = useState<{ x: number; y: number } | null>(null);
+    const [editingLayerId, setEditingLayerId] = useState<string | null>(null); // NEW: Track ID being edited
+    const [initialTextValue, setInitialTextValue] = useState(""); // NEW: Pre-fill input
     const socket = useSocket();
     const roomId = "demo-room";
     const { clearCanvas } = useCanvasStore();
@@ -53,6 +55,7 @@ export const useDraw = () => {
                 points: (data.type === "pencil" || data.type === "eraser") ? [data.x, data.y] : [],
                 width: 0,
                 height: 0,
+                text: data.text
             };
             setLayers((prev) => [...prev, newLayer]);
         });
@@ -75,11 +78,18 @@ export const useDraw = () => {
             });
         });
 
+        socket.on("layer_update", (data: any) => {
+            setLayers((prev) => prev.map((layer) =>
+                layer.id === data.layerId ? { ...layer, x: data.x, y: data.y } : layer
+            ));
+        });
+
         socket.on("clear_board", () => clearCanvas());
 
         return () => {
             socket.off("draw_start");
             socket.off("draw_move");
+            socket.off("layer_update");
             socket.off("clear_board");
         };
     }, [socket, setLayers, clearCanvas]);
@@ -96,23 +106,34 @@ export const useDraw = () => {
         console.log("🖱️ Mouse Down! Current Tool:", tool);
         if (tool === "select" || tool === "hand") return;
 
+        // 1. SELECT TOOL LOGIC (Handling clicks on objects is done in Canvas via onClick, 
+        //    but if we click empty space, we do nothing here)
         if (tool === "text") {
+            // We must NOT open a new text box immediately.
+            // We check if the active element is our textarea.
+            if (document.activeElement?.tagName === "TEXTAREA") {
+                return;
+            }
+
             e.evt.preventDefault();
             const stage = e.target.getStage();
             const pos = stage.getRelativePointerPosition();
+
+            setEditingLayerId(null); // New text, not editing
+            setInitialTextValue(""); // Empty start
             setTypingPosition({ x: pos.x, y: pos.y });
             return; // Stop here, don't create a "drawing" layer yet
         }
 
         setIsDrawing(true);
-        const pos = e.target.getStage().getPointerPosition();
+        const pos = e.target.getStage().getRelativePointerPosition();
         const newId = uuidv4();
 
         const newLayer: Layer = {
             id: newId,
             type: tool as any,
-            x: pos.x,
-            y: pos.y,
+            x: (tool === "pencil" || tool === "eraser") ? 0 : pos.x,
+            y: (tool === "pencil" || tool === "eraser") ? 0 : pos.y,
             fill: fillColor,
             stroke: tool === "eraser" ? "#000000" : strokeColor,
             strokeWidth: tool === "eraser" ? 15 : strokeWidth,
@@ -129,8 +150,8 @@ export const useDraw = () => {
                 roomId,
                 layerId: newId,
                 type: tool,
-                x: pos.x,
-                y: pos.y,
+                x: (tool === "pencil" || tool === "eraser") ? 0 : pos.x,
+                y: (tool === "pencil" || tool === "eraser") ? 0 : pos.y,
                 fill: fillColor,
                 stroke: tool === "eraser" ? "#000000" : strokeColor,
                 strokeWidth: tool === "eraser" ? 15 : strokeWidth,
@@ -138,67 +159,97 @@ export const useDraw = () => {
         }
     };
 
-    // NEW: Function to save the text when user hits Enter
     const handleAddText = (text: string) => {
         if (!typingPosition) return;
 
-        const newId = uuidv4();
-        const newLayer: Layer = {
-            id: newId,
-            type: "text",
-            x: typingPosition.x,
-            y: typingPosition.y,
-            text: text, // Save the text
-            fill: strokeColor, // Use current color for text
-            stroke: strokeColor,
-            strokeWidth: 1,
-            width: text.length * 10, // Rough estimate
-            height: 20,
-        };
-
-        // Save Local
-        setLayers([...layers, newLayer]);
-        saveHistory();
-
-        // Broadcast Socket
-        if (socket) {
-            socket.emit("draw_start", {
-                roomId,
-                layerId: newId,
-                type: "text",
-                x: typingPosition.x,
-                y: typingPosition.y,
-                text: text,
-                fill: strokeColor
-            });
+        // 1. DELETE LOGIC: If text is empty, remove the layer
+        if (!text.trim()) {
+            if (editingLayerId) {
+                // Remove existing layer
+                setLayers((prev) => prev.filter(l => l.id !== editingLayerId));
+                // TODO: Emit delete event to socket/DB if you want perfect sync
+            }
+            setTypingPosition(null);
+            setEditingLayerId(null);
+            return;
         }
 
-        // Save DB (Optional: Reuse the fetch logic from handleMouseUp or make a helper)
-        // For now, let's just use the same pattern:
-        fetch("http://localhost:3001/api/drawings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                roomId,
-                layerId: newId,
+        const layerId = editingLayerId || uuidv4();
+
+        // 2. UPDATE OR CREATE
+        if (editingLayerId) {
+            // Update existing
+            setLayers((prev) => prev.map(l =>
+                l.id === editingLayerId ? { ...l, text: text } : l
+            ));
+            // In a real app, you'd emit an 'update_text' event here
+        } else {
+            // Create new
+            const newLayer: Layer = {
+                id: layerId,
                 type: "text",
                 x: typingPosition.x,
                 y: typingPosition.y,
                 text: text,
                 fill: strokeColor,
                 stroke: strokeColor,
-                strokeWidth: 1
-            }),
-        });
+                strokeWidth: 1,
+                width: text.length * 10,
+                height: 20,
+            };
+            setLayers([...layers, newLayer]);
 
-        setTypingPosition(null); // Hide input
+            // Only emit create for new layers for now to keep it simple
+            if (socket) {
+                socket.emit("draw_start", {
+                    roomId,
+                    layerId,
+                    type: "text",
+                    x: typingPosition.x,
+                    y: typingPosition.y,
+                    text: text,
+                    fill: strokeColor
+                });
+            }
+
+            // Save to DB
+            fetch("http://localhost:3001/api/drawings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    roomId,
+                    layerId,
+                    type: "text",
+                    x: typingPosition.x,
+                    y: typingPosition.y,
+                    text: text,
+                    fill: strokeColor,
+                    stroke: strokeColor,
+                    strokeWidth: 1
+                }),
+            });
+        }
+
+        saveHistory();
+        setTypingPosition(null);
+        setEditingLayerId(null);
+        setInitialTextValue("");
+    };
+
+    // NEW: Handle clicking a text node in Select Mode
+    const handleTextClick = (id: string, x: number, y: number, text: string) => {
+        if (tool !== "select") return;
+
+        setEditingLayerId(id);
+        setInitialTextValue(text);
+        setTypingPosition({ x, y });
     };
 
     const handleMouseMove = (e: any) => {
         if (!isDrawing) return;
 
         const stage = e.target.getStage();
-        const point = stage.getPointerPosition();
+        const point = stage.getRelativePointerPosition();
         let currentLayerId = "";
 
         setLayers((prevLayers) => {
@@ -289,6 +340,37 @@ export const useDraw = () => {
         }
     };
 
+    // NEW: Handle Drag and Drop
+    const handleDragEnd = async (e: any, layerId: string) => {
+        if (tool !== "select") return;
+        console.log("I just dragged a:", e.target.className);
+        const node = e.target;
+        const newX = node.x();
+        const newY = node.y();
+
+        // 1. Update local UI immediately
+        setLayers((prev) => prev.map((layer) =>
+            layer.id === layerId ? { ...layer, x: newX, y: newY } : layer
+        ));
+        saveHistory();
+
+        // 2. Broadcast to room
+        if (socket) {
+            socket.emit("layer_update", { roomId, layerId, x: newX, y: newY });
+        }
+
+        // 3. Save to Database
+        try {
+            await fetch(`http://localhost:3001/api/drawings/${roomId}/${layerId}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ x: newX, y: newY }),
+            });
+        } catch (error) {
+            console.error("Failed to update layer position:", error);
+        }
+    };
+
     return {
         layers,
         handleMouseDown,
@@ -297,6 +379,9 @@ export const useDraw = () => {
         handleClear,
         typingPosition,
         setTypingPosition,
-        handleAddText
+        handleAddText,
+        handleTextClick,
+        initialTextValue,
+        handleDragEnd
     };
 };

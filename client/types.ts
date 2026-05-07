@@ -1,4 +1,4 @@
-export type LayerType = "rectangle" | "circle" | "line" | "pencil" | "text";
+export type LayerType = "rectangle" | "circle" | "line" | "pencil" | "text" | "eraser" | "select" | "hand";
 
 export interface Layer {
     id: string;

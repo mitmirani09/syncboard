@@ -5,11 +5,12 @@ import { useEffect, useRef } from "react";
 interface TextInputProps {
     x: number;
     y: number;
+    initialValue?: string;
     onComplete: (text: string) => void;
     onCancel: () => void;
 }
 
-export function TextInput({ x, y, onComplete, onCancel }: TextInputProps) {
+export function TextInput({ x, y, initialValue = "", onComplete, onCancel }: TextInputProps) {
     const ref = useRef<HTMLTextAreaElement>(null);
 
     useEffect(() => {
@@ -17,6 +18,8 @@ export function TextInput({ x, y, onComplete, onCancel }: TextInputProps) {
         const timer = setTimeout(() => {
             if (ref.current) {
                 ref.current.focus();
+                // Move cursor to end of text
+                ref.current.setSelectionRange(ref.current.value.length, ref.current.value.length);
             }
         }, 0);
 
@@ -26,11 +29,7 @@ export function TextInput({ x, y, onComplete, onCancel }: TextInputProps) {
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            if (ref.current?.value.trim()) {
-                onComplete(ref.current.value);
-            } else {
-                onCancel();
-            }
+            onComplete(ref.current?.value || ""); // Allow empty string to trigger delete
         }
         if (e.key === "Escape") {
             onCancel();
@@ -38,16 +37,13 @@ export function TextInput({ x, y, onComplete, onCancel }: TextInputProps) {
     };
 
     const handleBlur = () => {
-        if (ref.current?.value.trim()) {
-            onComplete(ref.current.value);
-        } else {
-            onCancel();
-        }
+        onComplete(ref.current?.value || "");
     };
 
     return (
         <textarea
             ref={ref}
+            defaultValue={initialValue} // Set initial value
             // CHANGE 1: 'fixed' -> 'absolute' is correct (keeps it relative to parent container)
             // CHANGE 2: 'bg-transparent' -> 'bg-white' (So you can actually SEE it!)
             // CHANGE 3: Added 'shadow-xl' and 'z-50' to make it pop out

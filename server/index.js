@@ -59,6 +59,12 @@ io.on("connection", (socket) => {
         socket.to(roomId).emit("clear_board");
     });
 
+    // 6. Layer Update (Drag and Drop)
+    socket.on("layer_update", (data) => {
+        // data = { roomId, layerId, x, y }
+        socket.to(data.roomId).emit("layer_update", data);
+    });
+
     socket.on("disconnect", () => {
         console.log("User disconnected:", socket.id);
     });
